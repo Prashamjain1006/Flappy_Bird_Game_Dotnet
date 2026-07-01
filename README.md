@@ -25,3 +25,6 @@ A simple Flappy Bird game developed using C# and .NET Windows Forms.
 
 ## Screenshots
 <img width="514" height="675" alt="image" src="https://github.com/user-attachments/assets/534c7bc5-831b-430a-8749-ab33224aee56" />
+
+## AUTHOR 
+Prasham Jain
