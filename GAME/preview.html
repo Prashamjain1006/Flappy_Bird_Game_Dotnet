@@ -1,0 +1,1229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Neon Flap - Flappy Bird Preview</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Segoe+UI:wght@400;600;700;800;900&display=swap');
+        
+        body {
+            background-color: #0c0f24;
+            color: #ffffff;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            overflow: hidden;
+            user-select: none;
+        }
+
+        #game-container {
+            position: relative;
+            width: 480px;
+            height: 640px;
+            background-color: #000;
+            border: 4px solid #00b4ff;
+            box-shadow: 0 0 25px rgba(0, 180, 255, 0.5);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        canvas {
+            display: block;
+            background-color: #66b2ff;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="gameCanvas" width="480" height="640"></canvas>
+    </div>
+
+    <script>
+        const canvas = document.getElementById("gameCanvas");
+        const ctx = canvas.getContext("2d");
+
+        // Game State Enum
+        const STATES = { MENU: 0, SETTINGS: 1, PLAYING: 2, PAUSED: 3, GAMEOVER: 4 };
+        let state = STATES.MENU;
+
+        // Difficulty levels
+        const DIFFICULTY = [
+            { name: "EASY", speed: 150, gap: 170, spawnRate: 2.4, gravity: 1000, jump: -380 },
+            { name: "MEDIUM", speed: 200, gap: 140, spawnRate: 1.9, gravity: 1300, jump: -420 },
+            { name: "HARD", speed: 260, gap: 115, spawnRate: 1.4, gravity: 1600, jump: -460 }
+        ];
+        let currentDifficulty = 1; // Medium
+
+        // Skins
+        const SKINS = [
+            { id: 0, name: "CLASSIC BIRD", primary: "#ffd700", secondary: "#ff8c00" },
+            { id: 1, name: "CYBER BIRD", primary: "#00ffff", secondary: "#0064c8" },
+            { id: 2, name: "RUBY RAVEN", primary: "#dc143c", secondary: "#800000" },
+            { id: 3, name: "PHOENIX", primary: "#ff8c00", secondary: "#ffd700" }
+        ];
+        let selectedSkin = 0;
+
+        // Audio state
+        let soundVolume = 5;
+        let musicVolume = 5;
+        let soundEnabled = true;
+        let musicEnabled = true;
+
+        // Scores
+        let currentScore = 0;
+        let highScore = 0;
+        let coinsCollected = 0;
+
+        // Day/Night transitions
+        let isNight = false;
+        let dayNightTimer = 0;
+        let transitionProgress = 0; // 0.0 Day, 1.0 Night
+        const cycleDuration = 30; // 30s
+        const transitionDuration = 4; // 4s
+
+        // Achievement popup
+        let activeAchievementText = "";
+        let achievementTimer = 0;
+        const achievementDuration = 3.0;
+
+        // Button definitions (matches C# bounds)
+        const cx = 480 / 2;
+        const buttons = {
+            play: { x: cx - 90, y: 320, w: 180, h: 50, label: "PLAY GAME", color1: "#32cd32", color2: "#006400" },
+            settings: { x: cx - 90, y: 390, w: 180, h: 50, label: "SETTINGS", color1: "#00bfff", color2: "#4169e1" },
+            back: { x: 20, y: 20, w: 80, h: 35, label: "BACK" },
+            soundMinus: { x: cx + 10, y: 190, w: 35, h: 30, label: "-" },
+            soundPlus: { x: cx + 105, y: 190, w: 35, h: 30, label: "+" },
+            musicMinus: { x: cx + 10, y: 240, w: 35, h: 30, label: "-" },
+            musicPlus: { x: cx + 105, y: 240, w: 35, h: 30, label: "+" },
+            easy: { x: cx - 150, y: 340, w: 90, h: 35, label: "EASY" },
+            medium: { x: cx - 45, y: 340, w: 90, h: 35, label: "MEDIUM" },
+            hard: { x: cx + 60, y: 340, w: 90, h: 35, label: "HARD" },
+            skinPrev: { x: cx - 140, y: 210, w: 40, h: 40, label: "<" },
+            skinNext: { x: cx + 100, y: 210, w: 40, h: 40, label: ">" },
+            restart: { x: cx - 130, y: 460, w: 110, h: 40, label: "RESTART", color1: "#32cd32", color2: "#006400" },
+            menu: { x: cx + 20, y: 460, w: 110, h: 40, label: "MENU", color1: "#ffa500", color2: "#b8860b" }
+        };
+
+        // Entities
+        let bird = { x: 100, y: 320, radius: 15, velocity: 0, rotation: 0, flapState: 0, flapTimer: 0 };
+        let pipes = [];
+        let particles = [];
+        let clouds = [];
+        let stars = [];
+        let pipeSpawnTimer = 0;
+        let groundOffset = 0;
+        let fadeAlpha = 255;
+        let targetFade = 0;
+        let hoveredButton = "";
+
+        // Initialize clouds
+        for (let i = 0; i < 4; i++) {
+            clouds.push({
+                x: Math.random() * 480,
+                y: 40 + Math.random() * 140,
+                speed: 15 + Math.random() * 20,
+                scale: 0.6 + Math.random() * 0.8
+            });
+        }
+
+        // Initialize stars
+        for (let i = 0; i < 30; i++) {
+            stars.push({ x: Math.random() * 480, y: Math.random() * 400 });
+        }
+
+        function triggerAchievement(name) {
+            activeAchievementText = name;
+            achievementTimer = achievementDuration;
+            playTone(523, 0.1);
+            setTimeout(() => playTone(659, 0.1), 100);
+            setTimeout(() => playTone(784, 0.1), 200);
+            setTimeout(() => playTone(1046, 0.2), 300);
+        }
+
+        function checkAchievements() {
+            if (currentScore >= 1 && !scoresUnlocked.firstFlight) {
+                scoresUnlocked.firstFlight = true;
+                triggerAchievement("First Flight");
+            }
+            if (currentScore >= 10 && !scoresUnlocked.score10) {
+                scoresUnlocked.score10 = true;
+                triggerAchievement("Score 10 Badge");
+            }
+            if (currentScore >= 25 && !scoresUnlocked.score25) {
+                scoresUnlocked.score25 = true;
+                triggerAchievement("Score 25 Badge");
+            }
+            if (currentScore >= 50 && !scoresUnlocked.score50) {
+                scoresUnlocked.score50 = true;
+                triggerAchievement("Score 50 Badge");
+            }
+        }
+
+        let scoresUnlocked = { firstFlight: false, score10: false, score25: false, score50: false };
+
+        function startNewGame() {
+            bird.y = 320;
+            bird.velocity = 0;
+            bird.rotation = 0;
+            pipes = [];
+            particles = [];
+            currentScore = 0;
+            coinsCollected = 0;
+            scoresUnlocked = { firstFlight: false, score10: false, score25: false, score50: false };
+            pipeSpawnTimer = DIFFICULTY[currentDifficulty].spawnRate;
+            dayNightTimer = 0;
+            isNight = false;
+            transitionProgress = 0;
+            activeAchievementText = "";
+            achievementTimer = 0;
+            state = STATES.PLAYING;
+        }
+
+        // Audio synthesis simulation via Web Audio API
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        function playTone(freq, dur, type = "sine") {
+            if (!soundEnabled || soundVolume === 0) return;
+            try {
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = type;
+                osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+                gain.gain.setValueAtTime((soundVolume / 10) * 0.15, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + dur);
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start();
+                osc.stop(audioCtx.currentTime + dur);
+            } catch (e) {}
+        }
+
+        function playJump() {
+            if (!soundEnabled || soundVolume === 0) return;
+            try {
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.frequency.setValueAtTime(350, audioCtx.currentTime);
+                osc.frequency.linearRampToValueAtTime(600, audioCtx.currentTime + 0.08);
+                gain.gain.setValueAtTime((soundVolume / 10) * 0.12, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.08);
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start();
+                osc.stop(audioCtx.currentTime + 0.08);
+            } catch (e) {}
+        }
+
+        function playCollision() {
+            playTone(180, 0.25, "triangle");
+        }
+
+        // Loops & Updates
+        let lastTime = performance.now();
+        function gameLoop(now) {
+            let dt = (now - lastTime) / 1000;
+            lastTime = now;
+            if (dt > 0.1) dt = 0.1;
+
+            update(dt);
+            draw();
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        function update(dt) {
+            // Fade handling
+            if (fadeAlpha > targetFade) {
+                fadeAlpha = Math.max(targetFade, fadeAlpha - 500 * dt);
+            } else if (fadeAlpha < targetFade) {
+                fadeAlpha = Math.min(targetFade, fadeAlpha + 500 * dt);
+            }
+
+            // Day/Night Timer
+            dayNightTimer += dt;
+            if (dayNightTimer >= cycleDuration) {
+                isNight = !isNight;
+                dayNightTimer = 0;
+            }
+
+            if (isNight && transitionProgress < 1.0) {
+                transitionProgress = Math.min(1.0, transitionProgress + dt / transitionDuration);
+            } else if (!isNight && transitionProgress > 0.0) {
+                transitionProgress = Math.max(0.0, transitionProgress - dt / transitionDuration);
+            }
+
+            // Achievement popup timer
+            if (achievementTimer > 0) {
+                achievementTimer -= dt;
+                if (achievementTimer <= 0) {
+                    activeAchievementText = "";
+                }
+            }
+
+            // Update clouds
+            clouds.forEach(cloud => {
+                cloud.x -= cloud.speed * dt;
+                if (cloud.x < -150 * cloud.scale) {
+                    cloud.x = 480 + 50;
+                    cloud.y = 40 + Math.random() * 140;
+                }
+            });
+
+            // Update particles
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.vy += 200 * dt;
+                p.x += p.vx * dt;
+                p.y += p.vy * dt;
+                p.life -= dt;
+                if (p.life <= 0) particles.splice(i, 1);
+            }
+
+            if (state !== STATES.PLAYING) {
+                groundOffset = (groundOffset - DIFFICULTY[currentDifficulty].speed * dt) % 24;
+                return;
+            }
+
+            // Bird physics
+            bird.velocity += DIFFICULTY[currentDifficulty].gravity * dt;
+            bird.y += bird.velocity * dt;
+
+            // Rotation
+            let targetRot = Math.max(-0.5, Math.min(bird.velocity * 0.002, 1.2));
+            bird.rotation = bird.rotation * 0.8 + targetRot * 0.2;
+
+            // Wing animation
+            bird.flapTimer += dt;
+            if (bird.flapTimer >= 0.08) {
+                bird.flapState = (bird.flapState + 1) % 4;
+                bird.flapTimer = 0;
+            }
+
+            // Boundaries
+            if (bird.y - bird.radius <= 0) {
+                bird.y = bird.radius;
+                bird.velocity = 0;
+            }
+            if (bird.y + bird.radius >= 560) {
+                triggerGameOver();
+                return;
+            }
+
+            // Ground scroll
+            groundOffset = (groundOffset - DIFFICULTY[currentDifficulty].speed * dt) % 24;
+
+            // Pipes
+            pipeSpawnTimer += dt;
+            if (pipeSpawnTimer >= DIFFICULTY[currentDifficulty].spawnRate) {
+                const gapY = 60 + Math.random() * (560 - DIFFICULTY[currentDifficulty].gap - 100);
+                pipes.push({
+                    x: 480 + 50,
+                    gapY: gapY,
+                    w: 70,
+                    passed: false,
+                    hasCoin: Math.random() < 0.4,
+                    coinCollected: false,
+                    spin: 0
+                });
+                pipeSpawnTimer = 0;
+            }
+
+            for (let i = pipes.length - 1; i >= 0; i--) {
+                const pipe = pipes[i];
+                pipe.x -= DIFFICULTY[currentDifficulty].speed * dt;
+
+                // Spin coin
+                if (pipe.hasCoin && !pipe.coinCollected) {
+                    pipe.spin += 5 * dt;
+                }
+
+                // Check bird collision
+                const birdRadiusMargin = bird.radius - 1;
+                // Top Rect
+                const cx1 = Math.max(pipe.x, Math.min(bird.x, pipe.x + pipe.w));
+                const cy1 = Math.max(0, Math.min(bird.y, pipe.gapY));
+                const distSq1 = (bird.x - cx1) ** 2 + (bird.y - cy1) ** 2;
+
+                // Bottom Rect
+                const cx2 = Math.max(pipe.x, Math.min(bird.x, pipe.x + pipe.w));
+                const cy2 = Math.max(pipe.gapY + DIFFICULTY[currentDifficulty].gap, Math.min(bird.y, 640));
+                const distSq2 = (bird.x - cx2) ** 2 + (bird.y - cy2) ** 2;
+
+                if (distSq1 < birdRadiusMargin ** 2 || distSq2 < birdRadiusMargin ** 2) {
+                    triggerGameOver();
+                    return;
+                }
+
+                // Coin collection
+                if (pipe.hasCoin && !pipe.coinCollected) {
+                    const coinX = pipe.x + pipe.w / 2;
+                    const coinY = pipe.gapY + DIFFICULTY[currentDifficulty].gap / 2;
+                    const distCoinSq = (bird.x - coinX) ** 2 + (bird.y - coinY) ** 2;
+                    if (distCoinSq < (bird.radius + 10) ** 2) {
+                        pipe.coinCollected = true;
+                        coinsCollected++;
+                        currentScore += 2;
+                        playTone(988, 0.1);
+                        setTimeout(() => playTone(1318, 0.15), 80);
+                        checkAchievements();
+                        burstParticles(coinX, coinY, "#ffd700", 12);
+                    }
+                }
+
+                // Score Pass
+                if (!pipe.passed && pipe.x + pipe.w < bird.x) {
+                    pipe.passed = true;
+                    currentScore++;
+                    playTone(880, 0.1);
+                    setTimeout(() => playTone(1100, 0.15), 100);
+                    checkAchievements();
+                    burstParticles(bird.x, bird.y + 20, "rgba(255, 255, 255, 0.8)", 6);
+                }
+
+                // Remove off-screen pipes
+                if (pipe.x < -100) {
+                    pipes.splice(i, 1);
+                }
+            }
+        }
+
+        function triggerGameOver() {
+            state = STATES.GAMEOVER;
+            playCollision();
+            burstParticles(bird.x, bird.y, "#ff4500", 25);
+            if (currentScore > highScore) {
+                highScore = currentScore;
+            }
+        }
+
+        function burstParticles(x, y, color, count) {
+            for (let i = 0; i < count; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const speed = 50 + Math.random() * 120;
+                particles.push({
+                    x: x,
+                    y: y,
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed - 20,
+                    color: color,
+                    life: 0.4 + Math.random() * 0.5,
+                    maxLife: 1.0,
+                    angle: Math.random() * Math.PI * 2,
+                    rotSpeed: Math.random() * 10 - 5
+                });
+            }
+        }
+
+        // Render functions
+        function draw() {
+            ctx.clearRect(0, 0, 480, 640);
+
+            // Sky
+            drawSky();
+
+            // Stars
+            if (transitionProgress > 0.05) {
+                drawStars();
+            }
+
+            // Clouds
+            drawClouds();
+
+            // Pipes & bird
+            if (state === STATES.PLAYING || state === STATES.PAUSED || state === STATES.GAMEOVER) {
+                pipes.forEach(pipe => {
+                    drawPipe(pipe);
+                });
+
+                if (state !== STATES.GAMEOVER) {
+                    drawBird(bird.x, bird.y, bird.rotation, selectedSkin, bird.flapState);
+                }
+            }
+
+            // Particles
+            particles.forEach(p => {
+                ctx.save();
+                ctx.translate(p.x, p.y);
+                ctx.rotate(p.angle);
+                ctx.fillStyle = p.color;
+                ctx.globalAlpha = p.life / p.maxLife;
+                ctx.fillRect(-4, -4, 8, 8);
+                ctx.restore();
+            });
+
+            // Ground
+            drawGround();
+
+            // HUD
+            if (state === STATES.MENU) {
+                drawMenu();
+            } else if (state === STATES.SETTINGS) {
+                drawSettings();
+            } else if (state === STATES.PLAYING || state === STATES.PAUSED || state === STATES.GAMEOVER) {
+                drawHUD();
+                if (state === STATES.PAUSED) {
+                    drawPause();
+                } else if (state === STATES.GAMEOVER) {
+                    drawGameOver();
+                }
+            }
+
+            // Transition Overlay
+            if (fadeAlpha > 0) {
+                ctx.fillStyle = `rgba(0, 0, 0, ${fadeAlpha / 255})`;
+                ctx.fillRect(0, 0, 480, 640);
+            }
+        }
+
+        function drawSky() {
+            const grad = ctx.createLinearGradient(0, 0, 0, 640);
+            const rT = lerpColor("#66b2ff", "#0c0f24", transitionProgress);
+            const rB = lerpColor("#ffcc99", "#33004c", transitionProgress);
+            grad.addColorStop(0, rT);
+            grad.addColorStop(1, rB);
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, 480, 640);
+        }
+
+        function drawStars() {
+            ctx.save();
+            ctx.globalAlpha = transitionProgress * (0.3 + 0.7 * Math.sin(Date.now() * 0.002));
+            ctx.fillStyle = "#ffffff";
+            stars.forEach(s => {
+                ctx.fillRect(s.x, s.y, 2, 2);
+            });
+            ctx.restore();
+        }
+
+        function drawClouds() {
+            ctx.save();
+            ctx.fillStyle = "rgba(245, 248, 255, 0.45)";
+            clouds.forEach(c => {
+                ctx.beginPath();
+                const cw = 60 * c.scale;
+                const ch = 40 * c.scale;
+                ctx.ellipse(c.x, c.y, cw, ch, 0, 0, Math.PI * 2);
+                ctx.ellipse(c.x + 20 * c.scale, c.y - 15 * c.scale, cw * 1.1, ch * 1.1, 0, 0, Math.PI * 2);
+                ctx.ellipse(c.x + 45 * c.scale, c.y, cw * 0.9, ch * 0.9, 0, 0, Math.PI * 2);
+                ctx.fill();
+            });
+            ctx.restore();
+        }
+
+        function drawPipe(pipe) {
+            // Draw top column
+            drawPipeCylinder(pipe.x, 0, pipe.w, pipe.gapY, true);
+            // Draw bottom column
+            const bottomY = pipe.gapY + DIFFICULTY[currentDifficulty].gap;
+            drawPipeCylinder(pipe.x, bottomY, pipe.w, 640 - bottomY - 80, false);
+
+            // Draw coin
+            if (pipe.hasCoin && !pipe.coinCollected) {
+                ctx.save();
+                const coinX = pipe.x + pipe.w / 2;
+                const coinY = pipe.gapY + DIFFICULTY[currentDifficulty].gap / 2;
+                const scaleX = Math.abs(Math.sin(pipe.spin));
+                
+                ctx.beginPath();
+                ctx.arc(coinX, coinY, 10 + 4, 0, Math.PI * 2);
+                ctx.fillStyle = "rgba(255, 215, 0, 0.25)";
+                ctx.fill();
+
+                ctx.translate(coinX, coinY);
+                ctx.scale(Math.max(0.05, scaleX), 1.0);
+                
+                ctx.beginPath();
+                ctx.arc(0, 0, 10, 0, Math.PI * 2);
+                const coinGrad = ctx.createLinearGradient(-10, -10, 10, 10);
+                coinGrad.addColorStop(0, "#ffff00");
+                coinGrad.addColorStop(1, "#ffd700");
+                ctx.fillStyle = coinGrad;
+                ctx.fill();
+                ctx.strokeStyle = "#b8860b";
+                ctx.lineWidth = 1.5;
+                ctx.stroke();
+
+                ctx.fillStyle = "#b8860b";
+                ctx.font = "bold 9px sans-serif";
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.fillText("C", 0, 0);
+
+                ctx.restore();
+            }
+        }
+
+        function drawPipeCylinder(x, y, w, h, isTop) {
+            if (h <= 0) return;
+            ctx.save();
+            const grad = ctx.createLinearGradient(x, y, x + w, y);
+            grad.addColorStop(0, "#228b22");
+            grad.addColorStop(0.2, "#90ee90");
+            grad.addColorStop(0.5, "#32cd32");
+            grad.addColorStop(1, "#006400");
+            ctx.fillStyle = grad;
+            ctx.fillRect(x, y, w, h);
+            ctx.strokeStyle = "#000000";
+            ctx.lineWidth = 1.5;
+            ctx.strokeRect(x, y, w, h);
+
+            // Cap
+            const capH = 24;
+            const capW = w + 8;
+            const capX = x - 4;
+            const capY = isTop ? (y + h - capH) : y;
+            const capGrad = ctx.createLinearGradient(capX, capY, capX + capW, capY);
+            capGrad.addColorStop(0, "#32cd32");
+            capGrad.addColorStop(0.25, "#aaffaa");
+            capGrad.addColorStop(0.6, "#32cd32");
+            capGrad.addColorStop(1, "#005000");
+            ctx.fillStyle = capGrad;
+            ctx.fillRect(capX, capY, capW, capH);
+            ctx.strokeRect(capX, capY, capW, capH);
+            ctx.restore();
+        }
+
+        function drawBird(x, y, rot, skin, flapState) {
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.rotate(rot);
+
+            const activeSkin = SKINS[skin];
+
+            // Outer glows
+            if (skin === 1 || skin === 3) {
+                // Cyber or Phoenix auric glows
+                ctx.beginPath();
+                ctx.arc(0, 0, 20, 0, Math.PI * 2);
+                ctx.fillStyle = skin === 1 ? "rgba(0, 255, 255, 0.3)" : "rgba(255, 215, 0, 0.3)";
+                ctx.fill();
+            }
+
+            // Body
+            const bodyGrad = ctx.createLinearGradient(-15, -15, 15, 15);
+            bodyGrad.addColorStop(0, activeSkin.primary);
+            bodyGrad.addColorStop(1, activeSkin.secondary);
+            ctx.fillStyle = bodyGrad;
+            ctx.beginPath();
+            ctx.arc(0, 0, 15, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = "#000000";
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+
+            // Eye
+            ctx.fillStyle = "#ffffff";
+            ctx.beginPath();
+            ctx.arc(5, -6, 5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.fillStyle = "#000000";
+            ctx.beginPath();
+            ctx.arc(7, -4, 2, 0, Math.PI * 2);
+            ctx.fill();
+
+            if (skin === 2) { // Ruby fierce eyebrow
+                ctx.beginPath();
+                ctx.moveTo(0, -9);
+                ctx.lineTo(8, -6);
+                ctx.lineWidth = 2.0;
+                ctx.strokeStyle = "#000";
+                ctx.stroke();
+            }
+
+            // Beak
+            ctx.fillStyle = skin === 0 ? "#ff4500" : (skin === 1 ? "#ff00ff" : (skin === 2 ? "#ffff00" : "#ffd700"));
+            ctx.beginPath();
+            ctx.moveTo(12, -3);
+            ctx.lineTo(23, 2);
+            ctx.lineTo(12, 5);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+
+            // Wing flap offset
+            let wingY = 0;
+            let wingH = 12;
+            if (flapState === 0) { wingY = -4; wingH = 6; }
+            else if (flapState === 2) { wingY = 4; wingH = 6; }
+
+            const wingGrad = ctx.createLinearGradient(-11, -6 + wingY, 1, 6 + wingY);
+            wingGrad.addColorStop(0, activeSkin.primary);
+            wingGrad.addColorStop(1, "#333333");
+            ctx.fillStyle = wingGrad;
+            ctx.beginPath();
+            ctx.ellipse(-5, wingY, 7, wingH / 2, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+
+            if (skin === 3) { // Crown for Phoenix
+                ctx.fillStyle = "#ffd700";
+                ctx.beginPath();
+                ctx.moveTo(-7, -15);
+                ctx.lineTo(-9, -21);
+                ctx.lineTo(-3, -18);
+                ctx.lineTo(0, -23);
+                ctx.lineTo(3, -18);
+                ctx.lineTo(9, -21);
+                ctx.lineTo(7, -15);
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+            }
+
+            ctx.restore();
+        }
+
+        function drawGround() {
+            ctx.save();
+            // Soil
+            const soilGrad = ctx.createLinearGradient(0, 560 + 10, 0, 640);
+            soilGrad.addColorStop(0, "#643c14");
+            soilGrad.addColorStop(1, "#321e0a");
+            ctx.fillStyle = soilGrad;
+            ctx.fillRect(0, 560 + 10, 480, 70);
+
+            // Grass
+            const grassGrad = ctx.createLinearGradient(0, 560, 0, 560 + 10);
+            grassGrad.addColorStop(0, "#78e632");
+            grassGrad.addColorStop(1, "#469614");
+            ctx.fillStyle = grassGrad;
+            ctx.fillRect(0, 560, 480, 10);
+
+            ctx.strokeStyle = "#000000";
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.moveTo(0, 560);
+            ctx.lineTo(480, 560);
+            ctx.stroke();
+
+            // Ground scroll details
+            ctx.strokeStyle = "rgba(0, 0, 0, 0.2)";
+            ctx.lineWidth = 2.0;
+            for (let x = groundOffset; x < 480 + 50; x += 24) {
+                ctx.beginPath();
+                ctx.moveTo(x, 560 + 10);
+                ctx.lineTo(x - 10, 640);
+                ctx.stroke();
+            }
+            ctx.restore();
+        }
+
+        // GUI drawing
+        function drawGlassCard(x, y, w, h, fill, border) {
+            ctx.save();
+            ctx.beginPath();
+            ctx.roundRect(x, y, w, h, 12);
+            ctx.fillStyle = fill;
+            ctx.fill();
+            ctx.strokeStyle = border;
+            ctx.lineWidth = 1.8;
+            ctx.stroke();
+            ctx.restore();
+        }
+
+        function drawModernButton(btn) {
+            const isHovered = hoveredButton === btn.label;
+            const scale = isHovered ? 1.04 : 1.0;
+            
+            ctx.save();
+            ctx.translate(btn.x + btn.w / 2, btn.y + btn.h / 2);
+            ctx.scale(scale, scale);
+            
+            // Shadow
+            ctx.fillStyle = "rgba(0, 0, 0, 0.2)";
+            ctx.beginPath();
+            ctx.roundRect(-btn.w / 2 + 2, -btn.h / 2 + 3, btn.w, btn.h, 8);
+            ctx.fill();
+
+            // Body
+            const grad = ctx.createLinearGradient(-btn.w / 2, -btn.h / 2, -btn.w / 2, btn.h / 2);
+            grad.addColorStop(0, btn.color1 || "#32cd32");
+            grad.addColorStop(1, btn.color2 || "#006400");
+            ctx.fillStyle = grad;
+            ctx.beginPath();
+            ctx.roundRect(-btn.w / 2, -btn.h / 2, btn.w, btn.h, 8);
+            ctx.fill();
+
+            ctx.strokeStyle = isHovered ? "#ffffff" : (btn.color1 || "#32cd32");
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+
+            // Text
+            ctx.fillStyle = "#ffffff";
+            ctx.font = "bold 12px sans-serif";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(btn.label, 0, 0);
+
+            ctx.restore();
+        }
+
+        function drawArrowButton(btn) {
+            const isHovered = hoveredButton === btn.label;
+            ctx.save();
+            ctx.beginPath();
+            ctx.roundRect(btn.x, btn.y, btn.w, btn.h, 8);
+            ctx.fillStyle = isHovered ? "rgba(0, 191, 255, 0.25)" : "rgba(255, 255, 255, 0.12)";
+            ctx.fill();
+            ctx.strokeStyle = isHovered ? "#00ffff" : "rgba(0, 191, 255, 0.5)";
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+
+            ctx.fillStyle = "#ffffff";
+            ctx.font = "bold 14px sans-serif";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(btn.label, btn.x + btn.w / 2, btn.y + btn.h / 2);
+            ctx.restore();
+        }
+
+        function drawMiniButton(btn) {
+            const isHovered = hoveredButton === btn.label;
+            ctx.save();
+            ctx.beginPath();
+            ctx.roundRect(btn.x, btn.y, btn.w, btn.h, 6);
+            ctx.fillStyle = isHovered ? "rgba(0, 191, 255, 0.4)" : "rgba(0, 0, 50, 0.2)";
+            ctx.fill();
+            ctx.strokeStyle = "rgba(0, 191, 255, 0.6)";
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+
+            ctx.fillStyle = "#ffffff";
+            ctx.font = "bold 12px sans-serif";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(btn.label, btn.x + btn.w / 2, btn.y + btn.h / 2);
+            ctx.restore();
+        }
+
+        function drawDifficultyBtn(btn, isSelected) {
+            const isHovered = hoveredButton === btn.label;
+            ctx.save();
+            ctx.beginPath();
+            ctx.roundRect(btn.x, btn.y, btn.w, btn.h, 6);
+            ctx.fillStyle = isSelected ? "#ffd700" : (isHovered ? "rgba(255, 255, 255, 0.2)" : "rgba(255, 255, 255, 0.08)");
+            ctx.fill();
+            ctx.strokeStyle = isSelected ? "#ff4500" : (isHovered ? "#00ffff" : "#808080");
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+
+            ctx.fillStyle = isSelected ? "#000000" : "#ffffff";
+            ctx.font = "bold 9px sans-serif";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(btn.label, btn.x + btn.w / 2, btn.y + btn.h / 2);
+            ctx.restore();
+        }
+
+        function drawMenu() {
+            // Neon Flap Title
+            ctx.save();
+            const pulse = 1.0 + Math.sin(Date.now() * 0.005) * 0.04;
+            ctx.translate(cx, 130);
+            ctx.scale(pulse, pulse);
+            ctx.font = "bold 32px sans-serif";
+            ctx.textAlign = "center";
+            
+            // Glow
+            ctx.fillStyle = "rgba(0, 191, 255, 0.3)";
+            ctx.fillText("NEON FLAP", 2, 2);
+
+            const titleGrad = ctx.createLinearGradient(-100, 0, 100, 0);
+            titleGrad.addColorStop(0, "#ffd700");
+            titleGrad.addColorStop(1, "#ff4500");
+            ctx.fillStyle = titleGrad;
+            ctx.fillText("NEON FLAP", 0, 0);
+            ctx.restore();
+
+            // Skins Showcase
+            drawGlassCard(cx - 70, 230 - 45, 140, 90, "rgba(255, 255, 255, 0.15)", "#00ffff");
+            drawBird(cx, 230 - 5, 0, selectedSkin, 1);
+            
+            ctx.fillStyle = SKINS[selectedSkin].id === 0 ? "#ffd700" : (SKINS[selectedSkin].id === 1 ? "#00ffff" : (SKINS[selectedSkin].id === 2 ? "#dc143c" : "#ffff00"));
+            ctx.font = "bold 9px sans-serif";
+            ctx.textAlign = "center";
+            ctx.fillText(SKINS[selectedSkin].name, cx, 230 + 26);
+
+            // Nav buttons
+            drawArrowButton(buttons.skinPrev);
+            drawArrowButton(buttons.skinNext);
+
+            // Menu actions
+            drawModernButton(buttons.play);
+            drawModernButton(buttons.settings);
+
+            // Hints
+            ctx.fillStyle = "#e0ffff";
+            ctx.font = "bold 9px sans-serif";
+            ctx.textAlign = "center";
+            ctx.fillText("CHOOSE SKIN WITH ARROWS • PRESS PLAY TO FLAP", cx, 480);
+        }
+
+        function drawSettings() {
+            ctx.fillStyle = "#ffffff";
+            ctx.font = "bold 24px sans-serif";
+            ctx.textAlign = "center";
+            ctx.fillText("SETTINGS", cx, 100);
+
+            // Card Panel
+            drawGlassCard(cx - 180, 140, 360, 270, "rgba(255, 255, 255, 0.12)", "#00bfff");
+
+            // Text
+            ctx.fillStyle = "#e0ffff";
+            ctx.font = "bold 12px sans-serif";
+            ctx.textAlign = "left";
+            ctx.fillText("SOUND SFX:", cx - 150, 210);
+            ctx.fillText("MUSIC BGM:", cx - 150, 260);
+
+            ctx.fillStyle = "#ffffff";
+            ctx.fillText(soundVolume.toString(), cx + 65, 210);
+            ctx.fillText(musicVolume.toString(), cx + 65, 260);
+
+            drawMiniButton(buttons.soundMinus);
+            drawMiniButton(buttons.soundPlus);
+            drawMiniButton(buttons.musicMinus);
+            drawMiniButton(buttons.musicPlus);
+
+            // Divider
+            ctx.strokeStyle = "rgba(0, 191, 255, 0.4)";
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.moveTo(cx - 150, 300);
+            ctx.lineTo(cx + 150, 300);
+            ctx.stroke();
+
+            ctx.fillStyle = "#e0ffff";
+            ctx.fillText("DIFFICULTY SPEED:", cx - 150, 325);
+
+            drawDifficultyBtn(buttons.easy, currentDifficulty === 0);
+            drawDifficultyBtn(buttons.medium, currentDifficulty === 1);
+            drawDifficultyBtn(buttons.hard, currentDifficulty === 2);
+
+            // Back button
+            const isHovered = hoveredButton === "BACK";
+            ctx.save();
+            ctx.beginPath();
+            ctx.roundRect(buttons.back.x, buttons.back.y, buttons.back.w, buttons.back.h, 6);
+            ctx.fillStyle = isHovered ? "#dc143c" : "rgba(255, 255, 255, 0.12)";
+            ctx.fill();
+            ctx.strokeStyle = isHovered ? "#ffffff" : "#808080";
+            ctx.stroke();
+            ctx.fillStyle = "#ffffff";
+            ctx.font = "bold 9px sans-serif";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText("BACK", buttons.back.x + buttons.back.w / 2, buttons.back.y + buttons.back.h / 2);
+            ctx.restore();
+        }
+
+        function drawHUD() {
+            ctx.save();
+            ctx.fillStyle = "#ffffff";
+            ctx.font = "bold 36px sans-serif";
+            ctx.textAlign = "center";
+            ctx.lineWidth = 3.0;
+            ctx.strokeStyle = "#000000";
+            ctx.strokeText(currentScore.toString(), cx, 65);
+            ctx.fillText(currentScore.toString(), cx, 65);
+
+            ctx.font = "bold 12px sans-serif";
+            ctx.fillStyle = "#ffd700";
+            ctx.textAlign = "left";
+            ctx.fillText(`COINS: ${coinsCollected}`, 15, 25);
+
+            ctx.fillStyle = "#ff4500";
+            ctx.textAlign = "right";
+            ctx.fillText(`BEST: ${highScore}`, 465, 25);
+            ctx.restore();
+
+            // Achievement popup
+            if (activeAchievementText && achievementTimer > 0) {
+                let progress = 1.0;
+                if (achievementTimer > achievementDuration - 0.5) {
+                    progress = (achievementDuration - achievementTimer) / 0.5;
+                } else if (achievementTimer < 0.5) {
+                    progress = achievementTimer / 0.5;
+                }
+
+                const popupY = -60 + 90 * progress;
+                const alpha = progress;
+
+                ctx.save();
+                ctx.globalAlpha = alpha;
+                drawGlassCard(cx - 150, popupY, 300, 45, "rgba(0, 0, 0, 0.8)", "#ffd700");
+
+                ctx.fillStyle = "#ffd700";
+                ctx.beginPath();
+                ctx.arc(cx - 120, popupY + 22, 11, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = "#000000";
+                ctx.stroke();
+
+                ctx.fillStyle = "#ffd700";
+                ctx.font = "bold 8px sans-serif";
+                ctx.textAlign = "left";
+                ctx.fillText("ACHIEVEMENT UNLOCKED!", cx - 100, popupY + 16);
+                ctx.fillStyle = "#ffffff";
+                ctx.font = "bold 9px sans-serif";
+                ctx.fillText(activeAchievementText, cx - 100, popupY + 30);
+                ctx.restore();
+            }
+        }
+
+        function drawPause() {
+            ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
+            ctx.fillRect(0, 0, 480, 640);
+
+            drawGlassCard(cx - 150, 320 - 80, 300, 160, "rgba(255, 255, 255, 0.2)", "#ffa500");
+
+            ctx.fillStyle = "#ffa500";
+            ctx.font = "bold 24px sans-serif";
+            ctx.textAlign = "center";
+            ctx.fillText("GAME PAUSED", cx, 280);
+
+            ctx.fillStyle = "#ffffff";
+            ctx.font = "bold 10px sans-serif";
+            ctx.fillText("Press ESC to Resume\nPress R to Restart Game\nPress M for Main Menu", cx, 330);
+        }
+
+        function drawGameOver() {
+            drawGlassCard(cx - 160, 160, 320, 190, "rgba(255, 255, 255, 0.15)", currentScore >= highScore && currentScore > 0 ? "#ffd700" : "#ff0000");
+
+            ctx.fillStyle = "#ff0000";
+            ctx.font = "bold 32px sans-serif";
+            ctx.textAlign = "center";
+            ctx.fillText("GAME OVER", cx, 110);
+
+            ctx.fillStyle = "#e0ffff";
+            ctx.font = "bold 12px sans-serif";
+            ctx.textAlign = "left";
+            ctx.fillText("FINAL SCORE:", cx - 120, 195);
+            ctx.fillText("BEST SCORE:", cx - 120, 245);
+            ctx.fillText("COINS PILED:", cx - 120, 295);
+
+            ctx.fillStyle = "#ffffff";
+            ctx.font = "bold 16px sans-serif";
+            ctx.fillText(currentScore.toString(), cx + 50, 195);
+            ctx.fillText(highScore.toString(), cx + 50, 245);
+            ctx.fillStyle = "#ffd700";
+            ctx.fillText("+" + coinsCollected, cx + 50, 295);
+
+            // Badges row
+            ctx.fillStyle = "#87ceeb";
+            ctx.font = "bold 8px sans-serif";
+            ctx.textAlign = "center";
+            ctx.fillText("BADGES UNLOCKED:", cx, 375);
+
+            let activeBadges = [];
+            if (scoresUnlocked.firstFlight) activeBadges.push("First Flight");
+            if (scoresUnlocked.score10) activeBadges.push("Score 10");
+            if (scoresUnlocked.score25) activeBadges.push("Score 25");
+            if (scoresUnlocked.score50) activeBadges.push("Score 50");
+
+            if (activeBadges.length === 0) {
+                ctx.fillStyle = "#808080";
+                ctx.font = "italic 9px sans-serif";
+                ctx.fillText("No badges earned yet.", cx, 395);
+            } else {
+                let spacing = 65;
+                let startX = cx - ((activeBadges.length - 1) * spacing) / 2;
+                activeBadges.forEach((badge, idx) => {
+                    let bx = startX + idx * spacing;
+                    let by = 405;
+
+                    ctx.fillStyle = "rgba(255, 215, 0, 0.3)";
+                    ctx.beginPath();
+                    ctx.arc(bx, by, 16, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    ctx.fillStyle = "#ffd700";
+                    ctx.beginPath();
+                    ctx.arc(bx, by, 12, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.strokeStyle = "#b8860b";
+                    ctx.stroke();
+
+                    ctx.font = "bold 6.5px sans-serif";
+                    ctx.fillStyle = "#ffff00";
+                    ctx.fillText(badge, bx, by + 18);
+                });
+            }
+
+            drawModernButton(buttons.restart);
+            drawModernButton(buttons.menu);
+
+            ctx.fillStyle = "#c0c0c0";
+            ctx.font = "bold 9px sans-serif";
+            ctx.fillText("OR PRESS SPACEBAR TO QUICK RESTART", cx, 520);
+        }
+
+        // Helpers
+        function lerpColor(c1, c2, ratio) {
+            // Hex parsing and blending
+            const r1 = parseInt(c1.substring(1, 3), 16);
+            const g1 = parseInt(c1.substring(3, 5), 16);
+            const b1 = parseInt(c1.substring(5, 7), 16);
+            const r2 = parseInt(c2.substring(1, 3), 16);
+            const g2 = parseInt(c2.substring(3, 5), 16);
+            const b2 = parseInt(c2.substring(5, 7), 16);
+            
+            const r = Math.round(r1 + (r2 - r1) * ratio);
+            const g = Math.round(g1 + (g2 - g1) * ratio);
+            const b = Math.round(b1 + (b2 - b1) * ratio);
+            return `rgb(${r}, ${g}, ${b})`;
+        }
+
+        // Handle inputs
+        window.addEventListener("keydown", e => {
+            if (e.code === "Space") {
+                if (state === STATES.PLAYING) {
+                    bird.velocity = DIFFICULTY[currentDifficulty].jump;
+                    playJump();
+                } else if (state === STATES.MENU) {
+                    fadeTransition(STATES.PLAYING);
+                } else if (state === STATES.GAMEOVER) {
+                    fadeTransition(STATES.PLAYING);
+                }
+            } else if (e.code === "Escape") {
+                if (state === STATES.PLAYING) {
+                    state = STATES.PAUSED;
+                } else if (state === STATES.PAUSED) {
+                    state = STATES.PLAYING;
+                }
+            } else if (e.code === "KeyR" && state === STATES.PAUSED) {
+                fadeTransition(STATES.PLAYING);
+            } else if (e.code === "KeyM" && state === STATES.PAUSED) {
+                fadeTransition(STATES.MENU);
+            }
+        });
+
+        canvas.addEventListener("mousedown", e => {
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+
+            if (state === STATES.PLAYING) {
+                bird.velocity = DIFFICULTY[currentDifficulty].jump;
+                playJump();
+                return;
+            }
+
+            const hit = getHitButton(mouseX, mouseY);
+            if (!hit) return;
+
+            switch (hit) {
+                case "play":
+                    fadeTransition(STATES.PLAYING);
+                    break;
+                case "settings":
+                    fadeTransition(STATES.SETTINGS);
+                    break;
+                case "back":
+                    fadeTransition(STATES.MENU);
+                    break;
+                case "restart":
+                    fadeTransition(STATES.PLAYING);
+                    break;
+                case "menu":
+                    fadeTransition(STATES.MENU);
+                    break;
+                case "skinPrev":
+                    selectedSkin = (selectedSkin - 1 + SKINS.length) % SKINS.length;
+                    playJump();
+                    break;
+                case "skinNext":
+                    selectedSkin = (selectedSkin + 1) % SKINS.length;
+                    playJump();
+                    break;
+                case "soundMinus":
+                    soundVolume = Math.max(0, soundVolume - 1);
+                    playTone(880, 0.1);
+                    break;
+                case "soundPlus":
+                    soundVolume = Math.min(10, soundVolume + 1);
+                    playTone(880, 0.1);
+                    break;
+                case "musicMinus":
+                    musicVolume = Math.max(0, musicVolume - 1);
+                    break;
+                case "musicPlus":
+                    musicVolume = Math.min(10, musicVolume + 1);
+                    break;
+                case "easy":
+                    currentDifficulty = 0;
+                    playJump();
+                    break;
+                case "medium":
+                    currentDifficulty = 1;
+                    playJump();
+                    break;
+                case "hard":
+                    currentDifficulty = 2;
+                    playJump();
+                    break;
+            }
+        });
+
+        canvas.addEventListener("mousemove", e => {
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+
+            const hit = getHitButton(mouseX, mouseY);
+            hoveredButton = hit ? buttons[hit].label : "";
+        });
+
+        function getHitButton(mx, my) {
+            if (state === STATES.MENU) {
+                if (isInside(mx, my, buttons.play)) return "play";
+                if (isInside(mx, my, buttons.settings)) return "settings";
+                if (isInside(mx, my, buttons.skinPrev)) return "skinPrev";
+                if (isInside(mx, my, buttons.skinNext)) return "skinNext";
+            } else if (state === STATES.SETTINGS) {
+                if (isInside(mx, my, buttons.back)) return "back";
+                if (isInside(mx, my, buttons.soundMinus)) return "soundMinus";
+                if (isInside(mx, my, buttons.soundPlus)) return "soundPlus";
+                if (isInside(mx, my, buttons.musicMinus)) return "musicMinus";
+                if (isInside(mx, my, buttons.musicPlus)) return "musicPlus";
+                if (isInside(mx, my, buttons.easy)) return "easy";
+                if (isInside(mx, my, buttons.medium)) return "medium";
+                if (isInside(mx, my, buttons.hard)) return "hard";
+            } else if (state === STATES.GAMEOVER) {
+                if (isInside(mx, my, buttons.restart)) return "restart";
+                if (isInside(mx, my, buttons.menu)) return "menu";
+            }
+            return null;
+        }
+
+        function isInside(x, y, btn) {
+            return x >= btn.x && x <= btn.x + btn.w && y >= btn.y && y <= btn.y + btn.h;
+        }
+
+        function fadeTransition(targetState) {
+            targetFade = 255;
+            fadeAlpha = 0;
+            const interval = setInterval(() => {
+                if (fadeAlpha >= 254) {
+                    clearInterval(interval);
+                    state = targetState;
+                    if (targetState === STATES.PLAYING) {
+                        startNewGame();
+                    }
+                    targetFade = 0;
+                }
+            }, 30);
+        }
+
+        // Start
+        requestAnimationFrame(gameLoop);
+    </script>
+</body>
+</html>

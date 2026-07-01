@@ -1,0 +1,11 @@
+C:\Users\Hp\Desktop\DOTNET\GAME\obj\Release\FlappyBird.csprojResolveAssemblyReference.cache
+C:\Users\Hp\Desktop\DOTNET\GAME\bin\Release\FlappyBird.exe
+C:\Users\Hp\Desktop\DOTNET\GAME\bin\Release\FlappyBird.pdb
+C:\Users\Hp\Desktop\DOTNET\GAME\bin\Release\mscorlib.dll
+C:\Users\Hp\Desktop\DOTNET\GAME\bin\Release\normidna.nlp
+C:\Users\Hp\Desktop\DOTNET\GAME\bin\Release\normnfc.nlp
+C:\Users\Hp\Desktop\DOTNET\GAME\bin\Release\normnfd.nlp
+C:\Users\Hp\Desktop\DOTNET\GAME\bin\Release\normnfkc.nlp
+C:\Users\Hp\Desktop\DOTNET\GAME\bin\Release\normnfkd.nlp
+C:\Users\Hp\Desktop\DOTNET\GAME\obj\Release\FlappyBird.exe
+C:\Users\Hp\Desktop\DOTNET\GAME\obj\Release\FlappyBird.pdb
